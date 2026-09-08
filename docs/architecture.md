@@ -41,6 +41,7 @@ single-tenant application. Isolation is established before them and enforced aft
 | `TenantResolver<S>` | Reports which tenant a request *claims* | Returns empty; the chain falls through |
 | `TenantResolverChain` | Ordered precedence, first match wins | — |
 | `TenantMembershipVerifier` | Decides whether the caller is *entitled* to that tenant | Returns false → 403, before any binding |
+| `TenantRegistry` | Says whether that tenant is currently *live* | Status other than `ACTIVE` → 403, before any binding |
 | `TenantFilter` | Binds the scope for the request, unwinds it after | No tenant + strict → 400 |
 | `TenantContext` | The single place the current tenant is read or written | `require()` throws `NoTenantException` |
 | `TenantContextStorage` | Where the value physically lives (ThreadLocal today) | — |
@@ -145,9 +146,9 @@ and [isolation strategies](isolation-strategies.md).
 - **No agent, no bytecode weaving, no proxy of your entities.** The only wrapping is a
   `DataSource` delegate.
 - **No phone-home, no telemetry.**
-- **No runtime dependency on the registry** for request handling — the registry is consulted
-  for iteration and, if you enable it, membership. A request that resolves from a token does
-  not touch it.
+- **No registry required** for request handling. Without one, resolution and membership work
+  exactly as documented. With one, every scoped request costs one registry lookup so that a
+  suspended tenant is refused rather than served — the same rule `forEachTenant` applies.
 - **No enforcement in Java.** Statement-level enforcement is a separate, paid concern
   precisely because doing it in Java is a weaker guarantee than doing it in the database.
 

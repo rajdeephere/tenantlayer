@@ -30,7 +30,7 @@ should have one; this one must not.
 | Column | Read by | Meaning |
 |---|---|---|
 | `tenant_id` | everything | The identifier resolution produces |
-| `status` | `forEachTenant`, membership | `ACTIVE` or `SUSPENDED`. Suspended tenants are skipped by iteration. |
+| `status` | `TenantFilter`, `forEachTenant` | `ACTIVE` or `SUSPENDED`. Anything other than `ACTIVE` is refused at resolution with a 403 and skipped by iteration. |
 | `datasource_ref` | `DATABASE_PER_TENANT` | Which database this tenant lives in — several tenants may share one |
 | `region`, `tenant_group` | nothing yet | Reserved |
 | `metadata` | your code | Anything you want to hang off a tenant |
@@ -71,7 +71,11 @@ registry.save(new TenantRegistration(
         Map.of("plan", "enterprise")));
 ```
 
-Suspending a tenant is a status change, and iteration stops including them immediately:
+### Suspending a tenant
+
+Suspending a tenant is a status change. It takes effect on the next request and the next
+iteration, and both agree on what it means: `TenantFilter` refuses the tenant with a 403
+before any connection is bound, and `forEachTenant` leaves it out.
 
 ```java
 registry.find("acme").ifPresent(t -> registry.save(
@@ -121,7 +125,8 @@ void rebuildReports() {
 ```
 
 Each iteration runs with that tenant bound, so `reportService` needs no tenant parameter
-and its queries scope themselves. Suspended tenants are skipped.
+and its queries scope themselves. Suspended tenants are skipped, exactly as their requests
+are refused — a tenant is never off for its users and on for the nightly job.
 
 **One tenant's failure does not cancel the rest.** A nightly job that aborts on the first
 bad tenant leaves everyone after it in the list unprocessed, and which ones those are

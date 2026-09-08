@@ -34,7 +34,7 @@ Requires Spring Security on the classpath.
 
 | Property | Default | Meaning |
 |---|---|---|
-| `tenantlayer.registry.enabled` | `true` | Expose a `TenantRegistry` backed by the application DataSource. |
+| `tenantlayer.registry.enabled` | `true` | Expose a `TenantRegistry` backed by the application DataSource. While one exists, `TenantFilter` refuses tenants whose status is not `ACTIVE`, so the table must exist. |
 | `tenantlayer.registry.table` | `tenantlayer_tenants` | Table the registry reads and writes. Validated as a plain SQL identifier. |
 
 ## Schema scanning and policy generation

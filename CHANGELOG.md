@@ -4,6 +4,31 @@ Notable changes per release. This project follows [semantic versioning](https://
 with the usual 0.x caveat: breaking changes may land in any 0.x release, and will always be
 listed here.
 
+## Unreleased
+
+### Suspended tenants are refused, not served
+
+The registry's `status` column has existed since 0.1.0 and, by its own javadoc, was "carried
+and reported, not yet used to reject requests". It is now used. When a `TenantRegistry` bean
+exists, `TenantFilter` looks the resolved tenant up after membership verification and before
+the tenant is bound, and refuses any status other than `ACTIVE` with a 403. This is the same
+rule `forEachTenant` has always applied, so a suspended tenant is off for its users and for
+the nightly job at the same moment.
+
+A tenant the registry does not contain is **not** refused. Existence is a different control
+from status, and turning it on would make every deployment with an empty registry reject all
+traffic. Nothing changes for a deployment without a registry bean.
+
+**Behaviour change.** The registry is autoconfigured whenever a DataSource exists, so with
+this release every scoped request performs one registry lookup. If your application has a
+DataSource but never created the `tenantlayer_tenants` table, requests will now fail with a
+registry error rather than be served — a failure that is loud on purpose. Create the table
+(the DDL is in `TenantRegistrySchema.DDL`) or set `tenantlayer.registry.enabled=false`.
+
+`TenantFilter` gained a fifth constructor argument, the registry; the existing constructors
+still compile and behave as before. The membership-verifier recipe that checked status by
+hand is no longer needed and has been removed from the docs.
+
 ## 0.4.0 — 2026-09-10
 
 ### The control plane seams

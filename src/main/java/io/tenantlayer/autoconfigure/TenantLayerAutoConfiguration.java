@@ -224,13 +224,18 @@ public class TenantLayerAutoConfiguration {
     FilterRegistrationBean<TenantFilter> tenantLayerFilter(
             TenantResolver<HttpServletRequest> resolver,
             TenantLayerProperties properties,
-            ObjectProvider<TenantMembershipVerifier> membershipVerifier) {
+            ObjectProvider<TenantMembershipVerifier> membershipVerifier,
+            ObjectProvider<TenantRegistry> registry) {
 
         TenantMembershipVerifier verifier = membershipVerifier.getIfAvailable();
 
+        // Feature 54. Whenever a registry exists the filter consults it, so a suspended
+        // tenant is refused by default rather than after someone remembers to opt in.
+        // Switching the registry off (tenantlayer.registry.enabled=false) is the way to
+        // say "I do not want this", and it is a decision someone has to type.
         FilterRegistrationBean<TenantFilter> registration = new FilterRegistrationBean<>(
                 new TenantFilter(resolver, properties.isStrict(), properties.getUnscopedPaths(),
-                        verifier));
+                        verifier, registry.getIfAvailable()));
         registration.setOrder(filterOrder(properties, verifier != null));
         return registration;
     }

@@ -3,6 +3,8 @@ package io.tenantlayer.web;
 import io.tenantlayer.core.TenantContext;
 import io.tenantlayer.core.TenantResolver;
 import io.tenantlayer.core.TenantScope;
+import io.tenantlayer.registry.TenantRegistration;
+import io.tenantlayer.registry.TenantRegistry;
 import io.tenantlayer.security.TenantMembershipVerifier;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -10,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import org.springframework.web.filter.OncePerRequestFilter;
 import org.springframework.web.util.UrlPathHelper;
@@ -27,6 +30,12 @@ import org.springframework.web.util.UrlPathHelper;
  * is configured. Without one, a resolved tenant is taken at face value — correct for a
  * service behind a gateway that overwrites the header, and stated plainly in the docs so
  * nobody deploys it anywhere else by accident.
+ *
+ * <p>A third question, feature 54, is asked when a {@link TenantRegistry} is configured:
+ * <em>is that tenant currently allowed to be served at all</em>. A tenant the registry marks
+ * as anything other than {@link io.tenantlayer.registry.TenantStatus#ACTIVE} is refused
+ * here, before any connection is bound, which is the same rule {@code forEachTenant}
+ * applies when it decides which tenants a scheduled job visits.
  */
 public class TenantFilter extends OncePerRequestFilter {
 
@@ -34,18 +43,32 @@ public class TenantFilter extends OncePerRequestFilter {
     private final boolean strict;
     private final List<String> unscopedPaths;
     private final TenantMembershipVerifier membershipVerifier;
+    private final TenantRegistry registry;
 
     public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
                         List<String> unscopedPaths) {
-        this(resolver, strict, unscopedPaths, null);
+        this(resolver, strict, unscopedPaths, null, null);
     }
 
     public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
                         List<String> unscopedPaths, TenantMembershipVerifier membershipVerifier) {
+        this(resolver, strict, unscopedPaths, membershipVerifier, null);
+    }
+
+    /**
+     * @param membershipVerifier may be null, in which case a resolved tenant is taken at
+     *                           face value
+     * @param registry           may be null, in which case the tenant's status is not
+     *                           checked and a suspended tenant is served like any other
+     */
+    public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
+                        List<String> unscopedPaths, TenantMembershipVerifier membershipVerifier,
+                        TenantRegistry registry) {
         this.resolver = resolver;
         this.strict = strict;
         this.unscopedPaths = unscopedPaths;
         this.membershipVerifier = membershipVerifier;
+        this.registry = registry;
     }
 
     @Override
@@ -80,6 +103,23 @@ public class TenantFilter extends OncePerRequestFilter {
             response.sendError(HttpServletResponse.SC_FORBIDDEN,
                     "Not a member of tenant '" + tenant.get() + "'.");
             return;
+        }
+
+        // Feature 54. The status flag has been in the registry since v0.1; this is where it
+        // starts to mean something. Same rule as forEachTenant — only ACTIVE is served — so
+        // a suspended tenant cannot be skipped by the nightly job yet still answer requests.
+        // Also before the tenant is bound, for the same reason as membership. A tenant the
+        // registry has never heard of is not refused here: that is a different control
+        // (does this tenant exist) and enabling it would turn every deployment that has
+        // not yet populated its registry into one that rejects all traffic.
+        if (registry != null) {
+            Optional<TenantRegistration> registration = registry.find(tenant.get());
+            if (registration.isPresent() && !registration.get().isActive()) {
+                response.sendError(HttpServletResponse.SC_FORBIDDEN,
+                        "Tenant '" + tenant.get() + "' is "
+                                + registration.get().status().name().toLowerCase(Locale.ROOT) + ".");
+                return;
+            }
         }
 
         TenantScope previous = TenantContext.current().orElse(null);
