@@ -18,6 +18,19 @@ create table tenantlayer_tenants (
 Create it through your own migration tool. TenantLayer does not issue DDL against your
 database; `TenantRegistrySchema.DDL` is the statement, for you to commit and review.
 
+The role your application connects as must be able to read it:
+
+```sql
+grant select on tenantlayer_tenants to <your application role>;
+```
+
+That role is normally neither superuser nor the table's owner — this project tells you not
+to make it either, because both bypass row-level security — so the grant does not come for
+free. `TenantFilter` reads this table on every scoped request to check the tenant's status,
+and without the grant every request fails with `permission denied for table
+tenantlayer_tenants` rather than being served. Read is enough; nothing on the request path
+writes here.
+
 ## It has no row-level security, deliberately
 
 The registry is shared infrastructure that gets consulted *during* tenant resolution,

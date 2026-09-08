@@ -25,6 +25,19 @@ DataSource but never created the `tenantlayer_tenants` table, requests will now 
 registry error rather than be served — a failure that is loud on purpose. Create the table
 (the DDL is in `TenantRegistrySchema.DDL`) or set `tenantlayer.registry.enabled=false`.
 
+**Upgrading: your application role needs `select` on the registry.**
+
+```sql
+grant select on tenantlayer_tenants to <your application role>;
+```
+
+The table existing is not sufficient — the role reading it has to be allowed to. This
+catches more people than the missing table does, because the documented setup is a role
+that is neither superuser nor table owner, and such a role has no implicit access to a
+table it does not own. Without the grant, every scoped request fails with `permission
+denied for table tenantlayer_tenants`. The example's own `OrderIsolationTest` was written
+that way and started failing on exactly this, which is how it was found.
+
 `TenantFilter` gained a fifth constructor argument, the registry; the existing constructors
 still compile and behave as before. The membership-verifier recipe that checked status by
 hand is no longer needed and has been removed from the docs.
