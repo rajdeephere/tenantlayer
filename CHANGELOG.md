@@ -4,6 +4,62 @@ Notable changes per release. This project follows [semantic versioning](https://
 with the usual 0.x caveat: breaking changes may land in any 0.x release, and will always be
 listed here.
 
+## 0.4.0 — 2026-09-10
+
+### The control plane seams
+
+Four features that together make a tenant's whole lifecycle something you can drive, rather
+than something you assemble by hand each time.
+
+**Onboarding.** `TenantProvisioning.onboard(tenantId)` does the sequence — registry row,
+migrations, hooks, then ACTIVE — as one call from your own signup path. Previously every
+adopter wrote that orchestration themselves, and the step people got wrong was seeding:
+rows written with no tenant bound fail the policy under row-level security and have no
+connection at all under database-per-tenant. Hooks now run with the new tenant bound, so a
+`TenantProvisioningHook` writes seed data with ordinary repository calls.
+
+**Provisioning hooks.** `TenantProvisioningHook` is where everything application-specific
+goes — seed data, a Stripe customer, a search index, a warmed cache. Ordered, and a hook
+that throws stops provisioning rather than leaving a tenant that looks ready.
+
+**Tenant endpoints.** `/actuator/tenants` makes the registry operable over HTTP: list, read,
+onboard, change status, remove. Off unless both enabled and exposed, and it inherits
+whatever protects your other management endpoints. Creating goes through provisioning, not
+a bare registry insert.
+
+**The isolation checker.** At start-up, compares what your entities say should be protected
+against what Postgres actually enforces, and logs the difference: tables with no row-level
+security, tables with it enabled but no policy, a missing FORCE, and the case that makes all
+of those moot — connecting as a superuser. It warns and never fails start-up.
+
+**Tenant tag on metrics.** Every observation carries the acting tenant, behind a hard
+cardinality cap. The cap is the feature: an unbounded tenant tag multiplies your time series
+by your tenant count, and the first anyone hears of it is a Prometheus that will not start.
+
+### Also
+
+**Auth0 and Keycloak resolver presets**, contributed by @Zoymusk — `AuthPresets.forAuth0()`
+and `KeycloakOrganizationClaimResolver`. The Keycloak one refuses to guess when a token
+carries more than one organization in its map form, because iteration order there is not
+token order.
+
+**The guides were rewritten**, from roughly 9,000 words to 18,000 across 20 pages, with
+worked examples throughout. New: recipes, onboarding, async and threads, outbound HTTP,
+Kafka, metrics, the isolation checker, and tenant endpoints.
+
+### One thing to check when upgrading
+
+`TenantStatus` has a third constant, `PROVISIONING`. A **switch expression** over that enum
+with no `default` will no longer compile, since switch expressions must be exhaustive — which
+is the compiler telling you about a state you now have to think about. A switch *statement*
+is unaffected and will simply fall through, which is the quieter and more dangerous of the
+two, so it is worth grepping for. A tenant that is `PROVISIONING` is not
+servable; `TenantStatus.isServable()` is there to ask directly rather than comparing to
+`ACTIVE` by hand.
+
+Nothing else changes. Every existing property and interface behaves as before, and the
+methods added to `TenantConnectionStrategy` are `default`.
+
 ## 0.3.0 — 2026-09-08
 
 ### Database-per-tenant

@@ -181,7 +181,7 @@ and that is a tested guarantee, not an intention.
 <dependency>
   <groupId>io.tenantlayer</groupId>
   <artifactId>tenantlayer-spring-boot-starter</artifactId>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
 </dependency>
 ```
 
