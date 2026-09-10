@@ -147,8 +147,10 @@ and [isolation strategies](isolation-strategies.md).
   `DataSource` delegate.
 - **No phone-home, no telemetry.**
 - **No registry required** for request handling. Without one, resolution and membership work
-  exactly as documented. With one, every scoped request costs one registry lookup so that a
-  suspended tenant is refused rather than served — the same rule `forEachTenant` applies.
+  exactly as documented. With one, the filter checks the tenant's status so that a suspended
+  tenant is refused rather than served — the same rule `forEachTenant` applies — remembering
+  the answer for thirty seconds so the cost is one lookup per tenant per TTL, not per request.
+  `tenantlayer.registry.enforce-status=false` takes the registry off the request path entirely.
 - **No enforcement in Java.** Statement-level enforcement is a separate, paid concern
   precisely because doing it in Java is a weaker guarantee than doing it in the database.
 

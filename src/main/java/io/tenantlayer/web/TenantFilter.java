@@ -3,14 +3,15 @@ package io.tenantlayer.web;
 import io.tenantlayer.core.TenantContext;
 import io.tenantlayer.core.TenantResolver;
 import io.tenantlayer.core.TenantScope;
-import io.tenantlayer.registry.TenantRegistration;
 import io.tenantlayer.registry.TenantRegistry;
+import io.tenantlayer.registry.TenantStatus;
 import io.tenantlayer.security.TenantMembershipVerifier;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -33,9 +34,11 @@ import org.springframework.web.util.UrlPathHelper;
  *
  * <p>A third question, feature 54, is asked when a {@link TenantRegistry} is configured:
  * <em>is that tenant currently allowed to be served at all</em>. A tenant the registry marks
- * as anything other than {@link io.tenantlayer.registry.TenantStatus#ACTIVE} is refused
- * here, before any connection is bound, which is the same rule {@code forEachTenant}
- * applies when it decides which tenants a scheduled job visits.
+ * as anything other than {@link TenantStatus#ACTIVE} is refused here, before any
+ * connection is bound, which is the same rule {@code forEachTenant} applies when it decides
+ * which tenants a scheduled job visits. The answer may be remembered for a short while
+ * (see {@link TenantStatusCache}); the registry itself is never wrapped, so the callers
+ * that need the truth — provisioning, iteration — keep getting it.
  */
 public class TenantFilter extends OncePerRequestFilter {
 
@@ -43,7 +46,7 @@ public class TenantFilter extends OncePerRequestFilter {
     private final boolean strict;
     private final List<String> unscopedPaths;
     private final TenantMembershipVerifier membershipVerifier;
-    private final TenantRegistry registry;
+    private final TenantStatusCache status;
 
     public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
                         List<String> unscopedPaths) {
@@ -56,6 +59,9 @@ public class TenantFilter extends OncePerRequestFilter {
     }
 
     /**
+     * Status is checked on every request, uncached. Prefer the constructor taking a TTL
+     * when the registry is a database.
+     *
      * @param membershipVerifier may be null, in which case a resolved tenant is taken at
      *                           face value
      * @param registry           may be null, in which case the tenant's status is not
@@ -64,11 +70,25 @@ public class TenantFilter extends OncePerRequestFilter {
     public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
                         List<String> unscopedPaths, TenantMembershipVerifier membershipVerifier,
                         TenantRegistry registry) {
+        this(resolver, strict, unscopedPaths, membershipVerifier, registry, Duration.ZERO);
+    }
+
+    /**
+     * @param membershipVerifier may be null, in which case a resolved tenant is taken at
+     *                           face value
+     * @param registry           may be null, in which case the tenant's status is not
+     *                           checked and a suspended tenant is served like any other
+     * @param statusCacheTtl     how long a tenant's status is trusted before the registry is
+     *                           asked again; {@link Duration#ZERO} asks on every request
+     */
+    public TenantFilter(TenantResolver<HttpServletRequest> resolver, boolean strict,
+                        List<String> unscopedPaths, TenantMembershipVerifier membershipVerifier,
+                        TenantRegistry registry, Duration statusCacheTtl) {
         this.resolver = resolver;
         this.strict = strict;
         this.unscopedPaths = unscopedPaths;
         this.membershipVerifier = membershipVerifier;
-        this.registry = registry;
+        this.status = registry == null ? null : new TenantStatusCache(registry, statusCacheTtl);
     }
 
     @Override
@@ -112,12 +132,12 @@ public class TenantFilter extends OncePerRequestFilter {
         // registry has never heard of is not refused here: that is a different control
         // (does this tenant exist) and enabling it would turn every deployment that has
         // not yet populated its registry into one that rejects all traffic.
-        if (registry != null) {
-            Optional<TenantRegistration> registration = registry.find(tenant.get());
-            if (registration.isPresent() && !registration.get().isActive()) {
+        if (status != null) {
+            Optional<TenantStatus> current = status.statusOf(tenant.get());
+            if (current.isPresent() && !current.get().isServable()) {
                 response.sendError(HttpServletResponse.SC_FORBIDDEN,
                         "Tenant '" + tenant.get() + "' is "
-                                + registration.get().status().name().toLowerCase(Locale.ROOT) + ".");
+                                + current.get().name().toLowerCase(Locale.ROOT) + ".");
                 return;
             }
         }

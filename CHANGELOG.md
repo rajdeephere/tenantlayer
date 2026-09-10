@@ -20,10 +20,20 @@ from status, and turning it on would make every deployment with an empty registr
 traffic. Nothing changes for a deployment without a registry bean.
 
 **Behaviour change.** The registry is autoconfigured whenever a DataSource exists, so with
-this release every scoped request performs one registry lookup. If your application has a
-DataSource but never created the `tenantlayer_tenants` table, requests will now fail with a
-registry error rather than be served — a failure that is loud on purpose. Create the table
-(the DDL is in `TenantRegistrySchema.DDL`) or set `tenantlayer.registry.enabled=false`.
+this release the request path reads it. If your application has a DataSource but never
+created the `tenantlayer_tenants` table, requests will now fail with a registry error rather
+than be served — a failure that is loud on purpose. Create the table (the DDL is in
+`TenantRegistrySchema.DDL`), or set `tenantlayer.registry.enforce-status=false` to keep the
+registry for iteration and provisioning without the check on the request path.
+
+**The status lookup is cached, thirty seconds by default.** Enforcement runs on every scoped
+request and is happy with an answer a few seconds old, so the filter remembers each tenant's
+status for `tenantlayer.registry.status-cache-ttl` (`0s` disables the cache). The consequence:
+a suspension takes effect on requests within the TTL, not on the very next one. Only the
+filter's lookup is cached — `TenantRegistry.find()` is untouched, because `TenantProvisioning`
+reads it to decide whether a tenant is already ACTIVE, and a stale answer there would re-run
+every provisioning hook on a retried signup. Provisioning and `forEachTenant` are infrequent
+and want the truth; enforcement is hot and wants speed. Cache the one, leave the other alone.
 
 **Upgrading: your application role needs `select` on the registry.**
 
@@ -38,9 +48,10 @@ table it does not own. Without the grant, every scoped request fails with `permi
 denied for table tenantlayer_tenants`. The example's own `OrderIsolationTest` was written
 that way and started failing on exactly this, which is how it was found.
 
-`TenantFilter` gained a fifth constructor argument, the registry; the existing constructors
-still compile and behave as before. The membership-verifier recipe that checked status by
-hand is no longer needed and has been removed from the docs.
+`TenantFilter` gained two constructors: one taking the registry (status checked on every
+request), one taking the registry and a cache TTL. The existing constructors still compile
+and behave as before. The membership-verifier recipe that checked status by hand is no longer
+needed and has been removed from the docs.
 
 ## 0.4.0 — 2026-09-10
 

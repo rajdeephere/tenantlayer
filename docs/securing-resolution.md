@@ -116,8 +116,9 @@ The verifier receives only the tenant — the caller comes from the `SecurityCon
 Spring Security has populated by the time this runs.
 
 The verifier does not need to check the registry's status column. When a `TenantRegistry`
-bean exists the filter consults it after membership and refuses any tenant that is not
-`ACTIVE` with a 403 — see [the tenant registry](tenant-registry.md#suspending-a-tenant).
+bean exists (and `tenantlayer.registry.enforce-status` is left on) the filter consults it
+after membership and refuses any tenant that is not `ACTIVE` with a 403 — see
+[the tenant registry](tenant-registry.md#suspending-a-tenant).
 
 ## Proving it
 
@@ -154,7 +155,7 @@ testing membership.
 | Answers | Which tenant does this request claim? | Is this caller entitled to it? | Is that tenant currently live? |
 | Reads | Header, subdomain, path, token claim | The authenticated principal | The tenant registry |
 | Fails with | 400 (strict mode) | 403 | 403 |
-| Configured by | `tenantlayer.resolvers` | `tenantlayer.membership.enabled` | On whenever a `TenantRegistry` bean exists |
+| Configured by | `tenantlayer.resolvers` | `tenantlayer.membership.enabled` | `tenantlayer.registry.enforce-status`, on by default when a `TenantRegistry` bean exists |
 | Enough on its own | Only behind a header-overwriting gateway | — | — |
 
 A public API needs the first two; the third comes with the registry. An internal service behind a trust boundary can get away with the

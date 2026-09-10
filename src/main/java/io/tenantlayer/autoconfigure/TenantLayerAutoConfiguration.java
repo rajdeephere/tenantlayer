@@ -229,13 +229,19 @@ public class TenantLayerAutoConfiguration {
 
         TenantMembershipVerifier verifier = membershipVerifier.getIfAvailable();
 
-        // Feature 54. Whenever a registry exists the filter consults it, so a suspended
-        // tenant is refused by default rather than after someone remembers to opt in.
-        // Switching the registry off (tenantlayer.registry.enabled=false) is the way to
-        // say "I do not want this", and it is a decision someone has to type.
+        // Feature 54. When a registry exists the filter consults it, so a suspended tenant
+        // is refused by default rather than after someone remembers to opt in. The opt-out
+        // is tenantlayer.registry.enforce-status=false, and it is deliberately separate
+        // from registry.enabled: iteration and provisioning (#37) need the registry bean
+        // whether or not the request path reads it. The filter gets the raw registry and
+        // caches status on its own — the bean is not wrapped, so provisioning's
+        // "is this tenant already active?" keeps reading the truth.
+        TenantLayerProperties.Registry registryProperties = properties.getRegistry();
+        TenantRegistry statusSource = registryProperties.isEnforceStatus()
+                ? registry.getIfAvailable() : null;
         FilterRegistrationBean<TenantFilter> registration = new FilterRegistrationBean<>(
                 new TenantFilter(resolver, properties.isStrict(), properties.getUnscopedPaths(),
-                        verifier, registry.getIfAvailable()));
+                        verifier, statusSource, registryProperties.getStatusCacheTtl()));
         registration.setOrder(filterOrder(properties, verifier != null));
         return registration;
     }

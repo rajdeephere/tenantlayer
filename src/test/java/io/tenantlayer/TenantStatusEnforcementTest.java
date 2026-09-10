@@ -13,6 +13,7 @@ import io.tenantlayer.scheduling.TenantTasks;
 import io.tenantlayer.web.HeaderTenantResolver;
 import io.tenantlayer.web.TenantFilter;
 import jakarta.servlet.http.HttpServletResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -195,6 +196,38 @@ class TenantStatusEnforcementTest {
                     .containsExactlyElementsOf(visited)
                     .containsExactly("acme", "initech");
         }
+
+        @Test
+        @DisplayName("within the status cache TTL only the filter lags; the registry, "
+                + "forEachTenant and provisioning read the truth")
+        void withinTheTtlOnlyTheFilterLags() throws Exception {
+            // The cache is the filter's own. It is not a decorator around the registry bean,
+            // because TenantProvisioning.onboard reads the same row to stay idempotent and a
+            // stale ACTIVE there would re-run every hook on a retried signup. So: the hot,
+            // per-request path may be a few seconds behind; everything else must not be.
+            InMemoryRegistry registry = new InMemoryRegistry();
+            registry.save(TenantRegistration.of("acme"));
+            TenantFilter filter = new TenantFilter(
+                    new HeaderTenantResolver("X-Tenant-ID"), true, UNSCOPED, null, registry,
+                    Duration.ofHours(1));
+
+            assertThat(invoke(filter, "acme").getStatus()).isEqualTo(HttpServletResponse.SC_OK);
+
+            registry.save(new TenantRegistration(
+                    "acme", TenantStatus.SUSPENDED, null, null, null, Map.of()));
+
+            assertThat(invoke(filter, "acme").getStatus())
+                    .as("inside the TTL the filter still serves — the documented trade-off")
+                    .isEqualTo(HttpServletResponse.SC_OK);
+
+            assertThat(registry.find("acme")).get()
+                    .extracting(TenantRegistration::status)
+                    .as("the registry itself was never wrapped; find() tells the truth")
+                    .isEqualTo(TenantStatus.SUSPENDED);
+            List<String> visited = new ArrayList<>();
+            new TenantTasks(registry).forEachTenant(visited::add);
+            assertThat(visited).as("iteration reads the registry, not the filter's cache").isEmpty();
+        }
     }
 
     @Nested
@@ -216,6 +249,61 @@ class TenantStatusEnforcementTest {
                 assertThat(invoke(filter, "acme").getStatus())
                         .isEqualTo(HttpServletResponse.SC_OK);
             });
+        }
+
+        @Test
+        @DisplayName("tenantlayer.registry.enforce-status=false keeps the registry and drops the check")
+        void enforceStatusOffSkipsTheCheck() {
+            runner.withUserConfiguration(RegistryConfig.class)
+                    .withPropertyValues("tenantlayer.registry.enforce-status=false")
+                    .run(context -> {
+                        assertThat(context).as("the registry bean is unaffected by the switch")
+                                .hasSingleBean(TenantRegistry.class);
+                        TenantFilter filter = filterIn(context.getBean(FilterRegistrationBean.class));
+
+                        assertThat(invoke(filter, "globex").getStatus())
+                                .as("off means served, as before feature 54")
+                                .isEqualTo(HttpServletResponse.SC_OK);
+                    });
+        }
+
+        @Test
+        @DisplayName("the status lookup is cached by default, and the registry bean is not wrapped")
+        void statusIsCachedByDefaultWithoutWrappingTheRegistry() {
+            runner.withUserConfiguration(RegistryConfig.class).run(context -> {
+                TenantRegistry registry = context.getBean(TenantRegistry.class);
+                assertThat(registry)
+                        .as("provisioning and iteration get the bean as defined, no decorator")
+                        .isInstanceOf(InMemoryRegistry.class);
+                TenantFilter filter = filterIn(context.getBean(FilterRegistrationBean.class));
+
+                assertThat(invoke(filter, "acme").getStatus()).isEqualTo(HttpServletResponse.SC_OK);
+                registry.save(new TenantRegistration(
+                        "acme", TenantStatus.SUSPENDED, null, null, null, Map.of()));
+
+                assertThat(invoke(filter, "acme").getStatus())
+                        .as("the default TTL is thirty seconds, not zero, so this is still cached")
+                        .isEqualTo(HttpServletResponse.SC_OK);
+            });
+        }
+
+        @Test
+        @DisplayName("a zero TTL asks the registry on every request")
+        void zeroTtlDisablesTheCache() {
+            runner.withUserConfiguration(RegistryConfig.class)
+                    .withPropertyValues("tenantlayer.registry.status-cache-ttl=0s")
+                    .run(context -> {
+                        TenantRegistry registry = context.getBean(TenantRegistry.class);
+                        TenantFilter filter = filterIn(context.getBean(FilterRegistrationBean.class));
+
+                        assertThat(invoke(filter, "acme").getStatus()).isEqualTo(HttpServletResponse.SC_OK);
+                        registry.save(new TenantRegistration(
+                                "acme", TenantStatus.SUSPENDED, null, null, null, Map.of()));
+
+                        assertThat(invoke(filter, "acme").getStatus())
+                                .as("no cache: the suspension is seen on the very next request")
+                                .isEqualTo(HttpServletResponse.SC_FORBIDDEN);
+                    });
         }
 
         @Test

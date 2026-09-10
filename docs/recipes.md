@@ -71,11 +71,13 @@ public class TenantSuspension {
 }
 ```
 
-Suspension takes effect on the next request and the next `forEachTenant` run. The filter
-refuses the tenant with a 403 before any connection is bound, and iteration skips it — the
-two never disagree. Nothing to opt into: the check is on whenever a `TenantRegistry` bean
-exists, and the tenant must be in the registry for it to apply. A tenant the registry has
-never heard of is not refused; existence is a separate question from status.
+Suspension takes effect on the next `forEachTenant` run and, for requests, within the
+status cache TTL — thirty seconds by default, `0s` for instant. The filter refuses the
+tenant with a 403 before any connection is bound, and iteration skips it; they apply the same
+rule, the filter just remembers its answer for a moment. Nothing to opt into: the check is
+on whenever a `TenantRegistry` bean exists (`tenantlayer.registry.enforce-status=false`
+turns it off), and the tenant must be in the registry for it to apply. A tenant the registry
+has never heard of is not refused; existence is a separate question from status.
 
 ## A nightly job across every tenant
 

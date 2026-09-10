@@ -26,10 +26,10 @@ grant select on tenantlayer_tenants to <your application role>;
 
 That role is normally neither superuser nor the table's owner — this project tells you not
 to make it either, because both bypass row-level security — so the grant does not come for
-free. `TenantFilter` reads this table on every scoped request to check the tenant's status,
-and without the grant every request fails with `permission denied for table
-tenantlayer_tenants` rather than being served. Read is enough; nothing on the request path
-writes here.
+free. `TenantFilter` reads this table to check the tenant's status (once per tenant every
+thirty seconds by default, see below), and without the grant every request fails with
+`permission denied for table tenantlayer_tenants` rather than being served. Read is enough;
+nothing on the request path writes here.
 
 ## It has no row-level security, deliberately
 
@@ -43,7 +43,7 @@ should have one; this one must not.
 | Column | Read by | Meaning |
 |---|---|---|
 | `tenant_id` | everything | The identifier resolution produces |
-| `status` | `TenantFilter`, `forEachTenant` | `ACTIVE` or `SUSPENDED`. Anything other than `ACTIVE` is refused at resolution with a 403 and skipped by iteration. |
+| `status` | `TenantFilter`, `forEachTenant`, provisioning | `ACTIVE`, `SUSPENDED` or `PROVISIONING`. Anything other than `ACTIVE` is refused at resolution with a 403 and skipped by iteration. |
 | `datasource_ref` | `DATABASE_PER_TENANT` | Which database this tenant lives in — several tenants may share one |
 | `region`, `tenant_group` | nothing yet | Reserved |
 | `metadata` | your code | Anything you want to hang off a tenant |
@@ -86,9 +86,21 @@ registry.save(new TenantRegistration(
 
 ### Suspending a tenant
 
-Suspending a tenant is a status change. It takes effect on the next request and the next
-iteration, and both agree on what it means: `TenantFilter` refuses the tenant with a 403
-before any connection is bound, and `forEachTenant` leaves it out.
+Suspending a tenant is a status change, and both readers agree on what it means:
+`TenantFilter` refuses the tenant with a 403 before any connection is bound, and
+`forEachTenant` leaves it out.
+
+It takes effect on the next `forEachTenant` run, and on requests **within the status cache
+TTL** — thirty seconds by default (`tenantlayer.registry.status-cache-ttl`). The filter
+checks status on every scoped request, so it remembers the answer rather than querying the
+table each time; a tenant suspended a moment ago may be served for up to one TTL before the
+403 lands. Set the TTL to `0s` if you would rather pay a lookup per request for an instant
+cut-off. Only the filter's lookup is cached: `registry.find()` always reads the table, which
+is what lets provisioning stay idempotent and iteration stay exact.
+
+The check is on whenever a `TenantRegistry` bean exists. Setting
+`tenantlayer.registry.enforce-status=false` turns it off while keeping the registry for
+everything else.
 
 ```java
 registry.find("acme").ifPresent(t -> registry.save(
