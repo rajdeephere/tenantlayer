@@ -207,7 +207,8 @@ pooling, to connect it directly to Postgres, or to use the discriminator strateg
 
 Doing this correctly under transaction pooling means binding the tenant at **transaction
 start** rather than at connection checkout, with `SET LOCAL` inside the transaction — which
-is a different hook and is not built. It is tracked as an open issue.
+is a different hook and is not built. It is tracked as
+[issue #29](https://github.com/tenantlayer-io/tenantlayer/issues/29).
 
 > **Why this is not simply the default.** `SET LOCAL` requires a transaction to be local to,
 > and plenty of reads run in autocommit — a `@Transactional(readOnly = true)` that was
