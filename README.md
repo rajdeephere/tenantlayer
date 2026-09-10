@@ -2,6 +2,10 @@
 
 **The tenant isolation layer for Spring Boot + Postgres.**
 
+[![Maven Central](https://img.shields.io/maven-central/v/io.tenantlayer/tenantlayer-spring-boot-starter?label=Maven%20Central&color=2f6feb)](https://central.sonatype.com/artifact/io.tenantlayer/tenantlayer-spring-boot-starter)
+[![Licence](https://img.shields.io/badge/licence-Apache%202.0-2f6feb)](LICENSE)
+[![Java](https://img.shields.io/badge/Java-17%20%7C%2021-e76f00)](#what-it-runs-on)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5-6db33f)](#what-it-runs-on)
 [![TenantLayer on StartupScores](https://startupscores.com/badge/tenantlayer.svg?style=shield&v=combo&theme=dark)](https://startupscores.com/open-source/tenantlayer)
 
 Your query has no `WHERE tenant_id`. It returns only your tenant's rows anyway.
@@ -38,6 +42,13 @@ around it, which is where every hand-rolled implementation goes wrong.
   `FORCE ROW LEVEL SECURITY` (without it the table owner bypasses the policy, and apps very
   often connect as the owner), the `nullif` guard, and an index on the tenant column
   (a policy predicate on an unindexed column turns every read into a sequential scan).
+- **A start-up scan that says which tables are not actually protected.** The failure this
+  exists for is silent: a policy nobody applied, or one a later migration dropped, looks
+  exactly like a policy that works — until it doesn't. `IsolationChecker` reads `pg_class`
+  and `pg_policies` **on the connection the application really uses** and reports the table
+  with RLS off, the one with a policy but without `FORCE`, and the connection that is a
+  superuser and therefore bypasses every policy on the database. Warn-only by default, so
+  it tells you on the way up rather than refusing to start.
 - **Tenant-scoped entity scanning.** Finds which tables are tenant-scoped from Hibernate's
   runtime metamodel — by `@TenantId`, by column convention, with explicit include/exclude
   for the shared reference table that happens to carry a `tenant_id` audit column.
@@ -150,6 +161,35 @@ trusting `X-Tenant-ID` from the open internet.
   attempted, and the failures are aggregated into an exception that *names them*, in stable
   order, so the alert says which tenants failed rather than that something did.
 - **The scheduler thread is left as it was found.** Schedulers pool threads too.
+- **Onboarding a tenant is one call, and the order is the point.**
+  `TenantProvisioning.onboard(id)` writes the registry row, runs that tenant's migrations,
+  runs your hooks *with the new tenant bound*, and only then marks it `ACTIVE`. Seed data
+  written before a tenant is bound fails the policy under row-level security and has no
+  connection at all under database-per-tenant — which is why hooks run inside the context
+  and can use ordinary repositories. A `PROVISIONING` status exists so a half-built tenant
+  never reads as servable, and onboarding is idempotent, so a failed one is resumable
+  rather than wedged.
+- **Hooks are where your application goes.** `TenantProvisioningHook` — seed rows, a Stripe
+  customer, a search index, a warmed cache. Ordered, and a hook that throws stops the
+  onboarding rather than leaving a tenant that looks ready and is not.
+- **The registry is operable over HTTP.** `/actuator/tenants` lists, reads, onboards,
+  changes status and removes. Off unless you *both* enable and expose it, and it inherits
+  whatever already guards your management endpoints. Creating goes through provisioning, so
+  an operator cannot conjure a tenant that skipped its migrations; `PROVISIONING` cannot be
+  set by hand; and delete removes the registry row only — never a tenant's data, which is
+  a decision that belongs in your retention policy, not in an HTTP verb.
+
+### Seeing it in production
+
+- **A `tenant` tag on every observation, with a cap on what it can cost you.** Per-tenant
+  latency is the number you want on the day one customer is slow. The trap is cardinality:
+  one tag value per tenant multiplies every timer in the application by your tenant count,
+  and a tenant id that arrives in a header is attacker-controlled — an unbounded tag is a
+  metrics bill anyone can run up. TenantLayer admits the first 100 tenants (configurable)
+  and folds the rest into `__other__`, keeps `__none__` distinct from overflow, and holds
+  the cap under concurrent load. Saturation is itself observable, so you find out that
+  you've outgrown the cap from a metric rather than from an invoice.
+- **The tenant in your logs**, via MDC, on every thread the context reaches.
 
 ### Proving it, not claiming it
 
@@ -203,23 +243,38 @@ the table owner. [Getting started](docs/getting-started.md) is the ten-minute ve
 [Securing resolution](docs/securing-resolution.md) ·
 [Context propagation](docs/context-propagation.md) ·
 [Tenant registry](docs/tenant-registry.md) ·
+[Onboarding a tenant](docs/onboarding.md) ·
+[Tenant endpoints](docs/tenant-endpoints.md) ·
+[The isolation checker](docs/isolation-checker.md) ·
+[Metrics](docs/metrics.md) ·
+[Async & threads](docs/async-and-threads.md) ·
+[Kafka](docs/kafka.md) ·
+[Recipes](docs/recipes.md) ·
 [Testing](docs/testing.md) ·
 [Configuration](docs/configuration.md)
 
+The full index, including the architecture notes and the troubleshooting guide, is in
+[`docs/`](docs/README.md), and the same guides are on
+[tenantlayer.io/docs](https://tenantlayer.io/docs).
+
 ## Status
 
-**Pre-alpha. The code is v0.1-complete; the release is not.**
+**Published on Maven Central under Apache 2.0.** The current release is the one in the
+dependency snippet above; [`CHANGELOG.md`](CHANGELOG.md) lists what changed and when. Still
+0.x, and honestly so: breaking changes may land in any 0.x release and will always be
+listed there.
 
-Of the 34 features in the v0.1 roadmap, **30 are built and tested**, and every isolation
-claim among them has been mutation-tested — broken deliberately to confirm the test goes
-red. The other four are honest about what they are:
+Every isolation claim in this library has been mutation-tested — the assertion is broken
+deliberately, verified in the compiled bytecode, to confirm the test goes red. A test that
+cannot fail is not evidence, and twice in this project a surviving mutant proved a passing
+test was vacuous. Both are in the history.
+
+What it is still honest to call unfinished:
 
 | | Status |
 |---|---|
 | ThreadLocal + **ScopedValue** backing | The storage SPI ships with the ThreadLocal implementation. ScopedValue is a preview API until JDK 25 and shipping it would force `--enable-preview` on every consumer. See [Context storage](docs/context-storage.md). |
-| Apache 2.0 core **on Maven Central** | Nothing is published yet. The build produces signed sources and javadoc jars under `-Prelease`; the deploy has not happened. |
-| **Docs site** & guides | The guides are written and in `docs/`. There is no hosted site. |
-| **Community support** | Issue and PR templates exist. There is no public repository yet, so there is nowhere to file one. |
+| **A control plane you can look at** | The library exposes the seams — registry, provisioning, `/actuator/tenants`, per-tenant metrics — and an application can drive all of them. There is no hosted UI over the top, and across twenty services there is nothing that aggregates them. Tracked on the [roadmap](https://tenantlayer.io/roadmap). |
 
 Everything below is exercised by the suite.
 
@@ -233,6 +288,10 @@ Everything below is exercised by the suite.
 | `SchemaGenerationTest` | The generated policy, applied, actually isolates |
 | `KafkaPropagationTest` | The tenant survives a broker, and does not linger on the listener |
 | `VirtualThreadPropagationTest` | Enabling virtual threads does not drop the tenant |
+| `IsolationCheckerTest` | A table with RLS off, and one with a policy but no `FORCE`, are both reported |
+| `TenantProvisioningTest` | Hooks run with the tenant bound; a failing hook leaves a resumable state |
+| `TenantsEndpointTest` | The endpoint is absent unless enabled *and* exposed |
+| `TenantMetricsTest` | The cap holds under concurrency, and overflow is not confused with no-tenant |
 | `ShippedFixtureTest` | The published test fixtures work outside this repo |
 
 Verified on Java 17 and 21, Hibernate 6.6 and 7.0, Spring Boot 3.5.

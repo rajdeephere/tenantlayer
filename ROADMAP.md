@@ -17,30 +17,48 @@ Comment on an issue before you start, so two people don't build the same thing.
 
 ## Shipped
 
+**[0.4.0](https://github.com/tenantlayer-io/tenantlayer/releases/tag/v0.4.0)** — the control
+plane seams: onboarding a tenant in one call, provisioning hooks that run with the new
+tenant bound, `/actuator/tenants` for driving the registry over HTTP, a start-up isolation
+checker that reports the tables Postgres is not actually protecting, and a per-tenant
+metrics tag with a cardinality cap.
+
+**[0.3.0](https://github.com/tenantlayer-io/tenantlayer/releases/tag/v0.3.0)** —
+database-per-tenant routing, per-tenant migrations, and the registry taken off the
+tenant-aware datasource it was routing through.
+
+**[0.2.0](https://github.com/tenantlayer-io/tenantlayer/releases/tag/v0.2.0)** —
+tenant-scoped cache keys and per-tenant eviction, `TenantConnectionStrategy` as the seam
+that decides how a connection is obtained, and schema-per-tenant.
+
 **[0.1.0](https://github.com/tenantlayer-io/tenantlayer/releases/tag/v0.1.0)** — resolution
 from header, subdomain, path and JWT claim; membership verification; leak-proof RLS wiring
 and policy generation; the Hibernate discriminator; propagation across `@Async`,
 `CompletableFuture`, virtual threads, scheduled jobs, outbound HTTP and Kafka; the tenant
-registry; and the testing kit. See the [changelog](CHANGELOG.md).
+registry; and the testing kit.
+
+Every release is in the [changelog](CHANGELOG.md), with the upgrade notes.
 
 ## What the milestones are actually for
 
-**v0.2 is breadth.** Most of it is additive — a resolver here, a runner there — and most of
-it can be worked on in parallel by different people without colliding.
+The first four releases each had a job, and they went in this order for a reason.
 
-**v0.3 is the one that matters.** Database-per-tenant routing and the strategy switch
-together decide the shape of the isolation abstraction, and that abstraction is what
-everything else hangs off. It is also the most likely source of a breaking API change, which
-is why `1.0` comes after it and not before.
+**0.2 was breadth**, and it closed the hole that mattered most: a cache hit never consults
+the database, so row-level security cannot help it. Caching had to be tenant-scoped before
+anything else was worth building on top.
 
-**v0.4 is the things you want once it is running in production** — knowing a policy is
-missing before a customer finds out, and being able to see what the library thinks is going
-on.
+**0.3 was the one that mattered.** Database-per-tenant routing and the strategy switch
+together fixed the shape of the isolation abstraction, and everything else hangs off it.
+That is why `1.0` was always going to come after it rather than before.
 
-Two issues in v0.2 are more urgent than their milestone suggests. **Tenant-scoped cache
-keys** (#13) is a hole straight through every other isolation layer: a cache hit never
-consults the database, so row-level security cannot help. **Schema-per-tenant routing** (#3)
-carries the same `search_path` leak risk that the connection wiring was built to prevent.
+**0.4 is what you want once it is actually running** — knowing a policy is missing before a
+customer finds out, driving a tenant's whole lifecycle from your own signup path, and being
+able to see per-tenant latency without an unbounded metrics bill.
+
+**What is left before 1.0** is stability rather than surface: the API has to sit still
+across a few releases, and the remaining [open issues](https://github.com/tenantlayer-io/tenantlayer/issues)
+are additive — more resolver presets, suspend/activate semantics, Liquibase alongside
+Flyway, a tenant-aware health endpoint. None of them should break anyone.
 
 ## What is not on this list
 
